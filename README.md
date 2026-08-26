@@ -10,8 +10,8 @@ Installable sur iPhone en "Ajouter à l'écran d'accueil" depuis Safari.
 
 - Vite + React + TypeScript, PWA (`vite-plugin-pwa`)
 - Supabase (Postgres + Auth) pour la persistance et la synchronisation des données
-- Déploiement gratuit sur Render (Static Site), déployé automatiquement à
-  chaque push sur `main`
+- Déploiement gratuit sur GitHub Pages via GitHub Actions (nécessite un
+  dépôt public — Pages est payant pour les dépôts privés)
 
 Si Supabase n'est pas configuré, l'appli fonctionne quand même en local
 (stockage `localStorage` du navigateur) — pratique pour développer/tester,
@@ -46,29 +46,28 @@ La clé `anon` n'est pas un secret classique : elle est conçue pour être
 publique côté client, la sécurité vient des policies RLS définies dans
 `schema.sql` (chaque utilisateur ne voit que ses propres données).
 
-## Déployer sur Render
+## Déployer sur GitHub Pages
 
-1. Crée un compte sur https://render.com (gratuit, connexion possible via
-   GitHub).
-2. **New → Static Site**, connecte le dépôt GitHub (autorise Render à accéder
-   au dépôt s'il est privé).
-3. Configuration du service :
-   - **Build Command** : `npm ci && npm run build`
-   - **Publish directory** : `dist`
-4. Dans l'onglet **Environment** du service, ajoute les variables
+GitHub Pages est gratuit uniquement pour les dépôts **publics** (un dépôt
+privé nécessite un plan payant). Le code source de l'appli ne contient
+aucune donnée personnelle (tes matières, chapitres, échéances vivent dans
+Supabase, pas dans le dépôt), donc rendre le dépôt public ne t'expose pas.
+
+1. Dans le dépôt GitHub : **Settings → General → Danger Zone → Change
+   visibility → Make public**.
+2. Toujours dans **Settings → Pages → Build and deployment → Source**,
+   sélectionne **GitHub Actions**.
+3. Dans **Settings → Secrets and variables → Actions**, ajoute les secrets
    `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` (mêmes valeurs que dans
    `.env`).
-5. Render build et déploie automatiquement à chaque push sur `main`. L'URL
-   du site (`https://....onrender.com`) est affichée en haut du dashboard du
-   service.
-
-Comme l'appli utilise un routeur "hash" (URLs du type `/#/matieres`), aucune
-règle de réécriture serveur n'est nécessaire pour que la navigation
-fonctionne sur Render.
+4. Pousse sur `main` (ou relance le workflow depuis l'onglet **Actions**) :
+   le workflow [`deploy.yml`](./.github/workflows/deploy.yml) build et
+   publie automatiquement. L'URL est visible dans l'onglet **Actions** puis
+   dans **Settings → Pages**.
 
 ## Installer sur iPhone
 
-Ouvre l'URL Render dans **Safari** → bouton Partager → **Sur l'écran
+Ouvre l'URL GitHub Pages dans **Safari** → bouton Partager → **Sur l'écran
 d'accueil**. L'appli s'ouvre alors en plein écran, comme une vraie appli.
 
 ## Format d'import des chapitres (CSV/JSON)
@@ -113,4 +112,5 @@ src/
   components/ composants partagés (navigation)
 supabase/
   schema.sql  schéma de base de données + policies RLS à coller dans Supabase
+.github/workflows/deploy.yml  déploiement automatique sur GitHub Pages
 ```
