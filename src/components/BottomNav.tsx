@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 
 const links = [
-  { to: '/', label: 'Aujourd’hui', icon: '☀' },
+  { to: '/', label: 'Semaine', icon: '\u{1F5D3}' },
   { to: '/matieres', label: 'Matières', icon: '\u{1F4DA}' },
   { to: '/echeances', label: 'Échéances', icon: '\u{1F4C5}' },
   { to: '/importer', label: 'Importer', icon: '\u{1F4E5}' },

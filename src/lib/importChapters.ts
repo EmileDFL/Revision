@@ -70,6 +70,9 @@ export function rowsToEntities(
       orderIndex: row.ordre ?? chapters.length,
       status: 'a_faire',
       notes: '',
+      workMode: 'mixte',
+      memoStartDate: null,
+      courseStage: null,
     })
   }
 

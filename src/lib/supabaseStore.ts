@@ -4,12 +4,17 @@ import type {
   AlgoSettings,
   Chapter,
   ChapterStatus,
+  CourseStage,
   DataStore,
   Deadline,
   DeadlineType,
   ExportBundle,
   StudyLogEntry,
+  StudyLogKind,
   Subject,
+  TimetableSlot,
+  WeekType,
+  WorkMode,
 } from './types'
 
 interface SubjectRow {
@@ -25,6 +30,9 @@ interface ChapterRow {
   order_index: number
   status: ChapterStatus
   notes: string | null
+  work_mode: WorkMode
+  memo_start_date: string | null
+  course_stage: CourseStage | null
 }
 
 interface DeadlineRow {
@@ -42,6 +50,15 @@ interface StudyLogRow {
   date: string
   minutes_spent: number
   done: boolean
+  kind: StudyLogKind
+  milestone_index: number | null
+}
+
+interface TimetableRow {
+  id: string
+  subject_id: string
+  day_of_week: number
+  week_type: WeekType
 }
 
 function subjectFromRow(row: SubjectRow): Subject {
@@ -56,6 +73,9 @@ function chapterFromRow(row: ChapterRow): Chapter {
     orderIndex: row.order_index,
     status: row.status,
     notes: row.notes ?? '',
+    workMode: row.work_mode ?? 'mixte',
+    memoStartDate: row.memo_start_date,
+    courseStage: row.course_stage,
   }
 }
 
@@ -77,6 +97,17 @@ function studyLogFromRow(row: StudyLogRow): StudyLogEntry {
     date: row.date,
     minutesSpent: row.minutes_spent,
     done: row.done,
+    kind: row.kind ?? 'generic',
+    milestoneIndex: row.milestone_index,
+  }
+}
+
+function timetableFromRow(row: TimetableRow): TimetableSlot {
+  return {
+    id: row.id,
+    subjectId: row.subject_id,
+    dayOfWeek: row.day_of_week,
+    weekType: row.week_type,
   }
 }
 
@@ -110,7 +141,7 @@ export class SupabaseStore implements DataStore {
   async listChapters(): Promise<Chapter[]> {
     const { data, error } = await this.client
       .from('chapters')
-      .select('id,subject_id,title,order_index,status,notes')
+      .select('id,subject_id,title,order_index,status,notes,work_mode,memo_start_date,course_stage')
       .order('order_index')
     if (error) throw error
     return (data as ChapterRow[]).map(chapterFromRow)
@@ -124,6 +155,9 @@ export class SupabaseStore implements DataStore {
       order_index: chapter.orderIndex,
       status: chapter.status,
       notes: chapter.notes,
+      work_mode: chapter.workMode,
+      memo_start_date: chapter.memoStartDate,
+      course_stage: chapter.courseStage,
       user_id: this.userId,
     })
     if (error) throw error
@@ -137,6 +171,9 @@ export class SupabaseStore implements DataStore {
       order_index: chapter.orderIndex,
       status: chapter.status,
       notes: chapter.notes,
+      work_mode: chapter.workMode,
+      memo_start_date: chapter.memoStartDate,
+      course_stage: chapter.courseStage,
       user_id: this.userId,
     }))
     const { error } = await this.client.from('chapters').upsert(rows)
@@ -190,6 +227,43 @@ export class SupabaseStore implements DataStore {
     if (error) throw error
   }
 
+  async listTimetable(): Promise<TimetableSlot[]> {
+    const { data, error } = await this.client
+      .from('timetable_slots')
+      .select('id,subject_id,day_of_week,week_type')
+      .order('day_of_week')
+    if (error) throw error
+    return (data as TimetableRow[]).map(timetableFromRow)
+  }
+
+  async upsertTimetableSlot(slot: TimetableSlot): Promise<void> {
+    const { error } = await this.client.from('timetable_slots').upsert({
+      id: slot.id,
+      subject_id: slot.subjectId,
+      day_of_week: slot.dayOfWeek,
+      week_type: slot.weekType,
+      user_id: this.userId,
+    })
+    if (error) throw error
+  }
+
+  async upsertTimetableSlotsBulk(slots: TimetableSlot[]): Promise<void> {
+    const rows = slots.map((slot) => ({
+      id: slot.id,
+      subject_id: slot.subjectId,
+      day_of_week: slot.dayOfWeek,
+      week_type: slot.weekType,
+      user_id: this.userId,
+    }))
+    const { error } = await this.client.from('timetable_slots').upsert(rows)
+    if (error) throw error
+  }
+
+  async deleteTimetableSlot(id: string): Promise<void> {
+    const { error } = await this.client.from('timetable_slots').delete().eq('id', id)
+    if (error) throw error
+  }
+
   async getAvailability(date: string): Promise<number> {
     const { data, error } = await this.client
       .from('availability')
@@ -210,8 +284,16 @@ export class SupabaseStore implements DataStore {
   async listStudyLog(date: string): Promise<StudyLogEntry[]> {
     const { data, error } = await this.client
       .from('study_log')
-      .select('id,chapter_id,date,minutes_spent,done')
+      .select('id,chapter_id,date,minutes_spent,done,kind,milestone_index')
       .eq('date', date)
+    if (error) throw error
+    return (data as StudyLogRow[]).map(studyLogFromRow)
+  }
+
+  async listAllStudyLog(): Promise<StudyLogEntry[]> {
+    const { data, error } = await this.client
+      .from('study_log')
+      .select('id,chapter_id,date,minutes_spent,done,kind,milestone_index')
     if (error) throw error
     return (data as StudyLogRow[]).map(studyLogFromRow)
   }
@@ -223,6 +305,8 @@ export class SupabaseStore implements DataStore {
       date: entry.date,
       minutes_spent: entry.minutesSpent,
       done: entry.done,
+      kind: entry.kind,
+      milestone_index: entry.milestoneIndex,
       user_id: this.userId,
     })
     if (error) throw error
@@ -248,10 +332,11 @@ export class SupabaseStore implements DataStore {
   }
 
   async exportAll(): Promise<ExportBundle> {
-    const [subjects, chapters, deadlines, settings] = await Promise.all([
+    const [subjects, chapters, deadlines, timetable, settings] = await Promise.all([
       this.listSubjects(),
       this.listChapters(),
       this.listDeadlines(),
+      this.listTimetable(),
       this.getSettings(),
     ])
     const { data: availRows, error: availError } = await this.client
@@ -262,17 +347,14 @@ export class SupabaseStore implements DataStore {
     for (const row of availRows as { date: string; minutes: number }[]) {
       availability[row.date] = row.minutes
     }
-    const { data: logRows, error: logError } = await this.client
-      .from('study_log')
-      .select('id,chapter_id,date,minutes_spent,done')
-    if (logError) throw logError
-    const studyLog = (logRows as StudyLogRow[]).map(studyLogFromRow)
+    const studyLog = await this.listAllStudyLog()
 
     return {
       exportedAt: new Date().toISOString(),
       subjects,
       chapters,
       deadlines,
+      timetable,
       availability,
       studyLog,
       settings,

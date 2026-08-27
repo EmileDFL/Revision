@@ -7,6 +7,7 @@ import {
   type ExportBundle,
   type StudyLogEntry,
   type Subject,
+  type TimetableSlot,
 } from './types'
 
 const STORAGE_KEY = 'revision-terminale-data-v1'
@@ -15,6 +16,7 @@ interface RawData {
   subjects: Subject[]
   chapters: Chapter[]
   deadlines: Deadline[]
+  timetable: TimetableSlot[]
   availability: Record<string, number>
   studyLog: StudyLogEntry[]
   settings: AlgoSettings
@@ -25,9 +27,27 @@ function emptyData(): RawData {
     subjects: [],
     chapters: [],
     deadlines: [],
+    timetable: [],
     availability: {},
     studyLog: [],
     settings: DEFAULT_SETTINGS,
+  }
+}
+
+function normalizeChapter(chapter: Chapter): Chapter {
+  return {
+    ...chapter,
+    workMode: chapter.workMode ?? 'mixte',
+    memoStartDate: chapter.memoStartDate ?? null,
+    courseStage: chapter.courseStage ?? null,
+  }
+}
+
+function normalizeStudyLog(entry: StudyLogEntry): StudyLogEntry {
+  return {
+    ...entry,
+    kind: entry.kind ?? 'generic',
+    milestoneIndex: entry.milestoneIndex ?? null,
   }
 }
 
@@ -36,7 +56,15 @@ function load(): RawData {
   if (!raw) return emptyData()
   try {
     const parsed = JSON.parse(raw) as Partial<RawData>
-    return { ...emptyData(), ...parsed }
+    const data = { ...emptyData(), ...parsed }
+    data.chapters = data.chapters.map(normalizeChapter)
+    data.studyLog = data.studyLog.map(normalizeStudyLog)
+    data.settings = {
+      ...DEFAULT_SETTINGS,
+      ...data.settings,
+      weights: { ...DEFAULT_SETTINGS.weights, ...data.settings?.weights },
+    }
+    return data
   } catch {
     return emptyData()
   }
@@ -65,6 +93,7 @@ export class LocalStore implements DataStore {
     const chapterIds = new Set(data.chapters.filter((c) => c.subjectId === id).map((c) => c.id))
     data.chapters = data.chapters.filter((c) => c.subjectId !== id)
     data.deadlines = data.deadlines.filter((d) => d.subjectId !== id)
+    data.timetable = data.timetable.filter((t) => t.subjectId !== id)
     data.studyLog = data.studyLog.filter((l) => !chapterIds.has(l.chapterId))
     save(data)
   }
@@ -119,6 +148,34 @@ export class LocalStore implements DataStore {
     save(data)
   }
 
+  async listTimetable(): Promise<TimetableSlot[]> {
+    return load().timetable
+  }
+
+  async upsertTimetableSlot(slot: TimetableSlot): Promise<void> {
+    const data = load()
+    const idx = data.timetable.findIndex((t) => t.id === slot.id)
+    if (idx >= 0) data.timetable[idx] = slot
+    else data.timetable.push(slot)
+    save(data)
+  }
+
+  async upsertTimetableSlotsBulk(slots: TimetableSlot[]): Promise<void> {
+    const data = load()
+    for (const slot of slots) {
+      const idx = data.timetable.findIndex((t) => t.id === slot.id)
+      if (idx >= 0) data.timetable[idx] = slot
+      else data.timetable.push(slot)
+    }
+    save(data)
+  }
+
+  async deleteTimetableSlot(id: string): Promise<void> {
+    const data = load()
+    data.timetable = data.timetable.filter((t) => t.id !== id)
+    save(data)
+  }
+
   async getAvailability(date: string): Promise<number> {
     return load().availability[date] ?? 0
   }
@@ -131,6 +188,10 @@ export class LocalStore implements DataStore {
 
   async listStudyLog(date: string): Promise<StudyLogEntry[]> {
     return load().studyLog.filter((l) => l.date === date)
+  }
+
+  async listAllStudyLog(): Promise<StudyLogEntry[]> {
+    return load().studyLog
   }
 
   async upsertStudyLog(entry: StudyLogEntry): Promise<void> {
@@ -158,6 +219,7 @@ export class LocalStore implements DataStore {
       subjects: data.subjects,
       chapters: data.chapters,
       deadlines: data.deadlines,
+      timetable: data.timetable,
       availability: data.availability,
       studyLog: data.studyLog,
       settings: data.settings,
