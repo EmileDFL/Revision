@@ -383,6 +383,23 @@ export default function Settings() {
       </div>
 
       <div className="card">
+        <h2>Devoirs</h2>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>Fenêtre de crédit après un devoir fait (jours)</label>
+          <input
+            type="number"
+            min={0}
+            value={settings.homeworkCreditWindowDays}
+            onChange={(e) => save({ ...settings, homeworkCreditWindowDays: Number(e.target.value) || 0 })}
+          />
+          <p className="plan-item__meta" style={{ marginTop: 0 }}>
+            Un devoir lié à un chapitre et fait récemment réduit les séances d’exercices proposées pour ce
+            chapitre pendant cette durée, au lieu de s’y ajouter.
+          </p>
+        </div>
+      </div>
+
+      <div className="card">
         <h2>Sauvegarde</h2>
         <p className="plan-item__meta">Exporte toutes tes données dans un fichier JSON de secours.</p>
         <button className="secondary" onClick={exportData}>

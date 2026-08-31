@@ -32,6 +32,7 @@ export default function Deadlines() {
 
   const [hwTitle, setHwTitle] = useState('')
   const [hwSubjectId, setHwSubjectId] = useState('')
+  const [hwChapterId, setHwChapterId] = useState('')
   const [hwDueDate, setHwDueDate] = useState(todayIso())
   const [hwMinutes, setHwMinutes] = useState(30)
 
@@ -60,6 +61,11 @@ export default function Deadlines() {
     () => chapters.filter((c) => c.subjectId === subjectId).sort((a, b) => a.orderIndex - b.orderIndex),
     [chapters, subjectId],
   )
+  const chaptersForHwSubject = useMemo(
+    () => chapters.filter((c) => c.subjectId === hwSubjectId).sort((a, b) => a.orderIndex - b.orderIndex),
+    [chapters, hwSubjectId],
+  )
+  const chapterById = useMemo(() => new Map(chapters.map((c) => [c.id, c])), [chapters])
 
   function toggleChapter(id: string) {
     setSelectedChapters((prev) => {
@@ -97,20 +103,24 @@ export default function Deadlines() {
     const hw: Homework = {
       id: newId(),
       subjectId: hwSubjectId,
+      chapterId: hwChapterId || null,
       title: hwTitle.trim(),
       dueDate: hwDueDate,
       estimatedMinutes: hwMinutes,
       done: false,
+      doneAt: null,
       notes: '',
     }
     await store.upsertHomework(hw)
     setHwTitle('')
+    setHwChapterId('')
     setShowHomeworkForm(false)
     await refresh()
   }
 
   async function toggleHomeworkDone(hw: Homework) {
-    await store.upsertHomework({ ...hw, done: !hw.done })
+    const done = !hw.done
+    await store.upsertHomework({ ...hw, done, doneAt: done ? todayIso() : null })
     await refresh()
   }
 
@@ -238,7 +248,13 @@ export default function Deadlines() {
           </div>
           <div className="field">
             <label>Matière</label>
-            <select value={hwSubjectId} onChange={(e) => setHwSubjectId(e.target.value)}>
+            <select
+              value={hwSubjectId}
+              onChange={(e) => {
+                setHwSubjectId(e.target.value)
+                setHwChapterId('')
+              }}
+            >
               {subjects.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -246,6 +262,19 @@ export default function Deadlines() {
               ))}
             </select>
           </div>
+          {chaptersForHwSubject.length > 0 && (
+            <div className="field">
+              <label>Chapitre concerné (optionnel)</label>
+              <select value={hwChapterId} onChange={(e) => setHwChapterId(e.target.value)}>
+                <option value="">— aucun —</option>
+                {chaptersForHwSubject.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label>À rendre / à faire pour le</label>
             <input type="date" value={hwDueDate} onChange={(e) => setHwDueDate(e.target.value)} />
@@ -295,6 +324,7 @@ export default function Deadlines() {
               <div className="plan-item__meta">
                 {hw.estimatedMinutes} min · à faire pour le {new Date(`${hw.dueDate}T00:00:00`).toLocaleDateString('fr-FR')} ·{' '}
                 {daysUntilLabel(days)}
+                {hw.chapterId && chapterById.get(hw.chapterId) ? ` · ${chapterById.get(hw.chapterId)?.title}` : ''}
               </div>
             </div>
             <button

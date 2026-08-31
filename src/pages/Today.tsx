@@ -134,7 +134,8 @@ export default function Today() {
     if (item.homeworkId) {
       const hw = homeworkById.get(item.homeworkId)
       if (!hw) return
-      const updated: Homework = { ...hw, done: !hw.done }
+      const done = !hw.done
+      const updated: Homework = { ...hw, done, doneAt: done ? today : null }
       await store.upsertHomework(updated)
       setHomework((prev) => prev.map((h) => (h.id === updated.id ? updated : h)))
       return

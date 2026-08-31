@@ -140,6 +140,9 @@ export class LocalStore implements DataStore {
     data.chapters = data.chapters.filter((c) => c.id !== id)
     data.studyLog = data.studyLog.filter((l) => l.chapterId !== id)
     data.overrides = data.overrides.filter((o) => o.chapterId !== id)
+    for (const h of data.homework) {
+      if (h.chapterId === id) h.chapterId = null
+    }
     for (const d of data.deadlines) {
       d.chapterIds = d.chapterIds.filter((cid) => cid !== id)
     }

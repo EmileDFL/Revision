@@ -57,10 +57,18 @@ export interface Deadline {
 export interface Homework {
   id: string
   subjectId: string
+  /** Optionnel : si le devoir porte sur un chapitre précis (ex: "exercices
+   * de proba" → chapitre Probabilités), le temps qu'on y passe vient
+   * réduire les séances d'exercices que l'algo proposerait sinon pour ce
+   * même chapitre — pas de double-comptage. */
+  chapterId: string | null
   title: string
   dueDate: string // ISO yyyy-mm-dd
   estimatedMinutes: number
   done: boolean
+  /** Date à laquelle le devoir a été marqué fait — sert à borner la fenêtre
+   * pendant laquelle son temps "crédite" les séances d'exercices. */
+  doneAt: string | null
   notes: string
 }
 
@@ -128,6 +136,9 @@ export interface AlgoSettings {
    * plusieurs chapitres convergent vers la même éval, pour éviter qu'ils se
    * concentrent tous sur le même jour juste avant. */
   memoSpreadDays: number
+  /** Fenêtre (en jours) pendant laquelle un devoir fait, lié à un chapitre,
+   * réduit les séances d'exercices proposées pour ce chapitre. */
+  homeworkCreditWindowDays: number
 }
 
 export const DEFAULT_SETTINGS: AlgoSettings = {
@@ -146,6 +157,7 @@ export const DEFAULT_SETTINGS: AlgoSettings = {
   memoBufferBeforeEvalDays: 1,
   memoBlockMinutes: 20,
   weekAnchor: null,
+  homeworkCreditWindowDays: 4,
 }
 
 export const STATUS_LABELS: Record<ChapterStatus, string> = {

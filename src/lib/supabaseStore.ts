@@ -79,10 +79,12 @@ interface PlanOverrideRow {
 interface HomeworkRow {
   id: string
   subject_id: string
+  chapter_id: string | null
   title: string
   due_date: string
   estimated_minutes: number
   done: boolean
+  done_at: string | null
   notes: string | null
 }
 
@@ -152,10 +154,12 @@ function homeworkFromRow(row: HomeworkRow): Homework {
   return {
     id: row.id,
     subjectId: row.subject_id,
+    chapterId: row.chapter_id,
     title: row.title,
     dueDate: row.due_date,
     estimatedMinutes: row.estimated_minutes,
     done: row.done,
+    doneAt: row.done_at,
     notes: row.notes ?? '',
   }
 }
@@ -395,7 +399,7 @@ export class SupabaseStore implements DataStore {
   async listAllHomework(): Promise<Homework[]> {
     const { data, error } = await this.client
       .from('homework')
-      .select('id,subject_id,title,due_date,estimated_minutes,done,notes')
+      .select('id,subject_id,chapter_id,title,due_date,estimated_minutes,done,done_at,notes')
       .order('due_date')
     if (error) throw error
     return (data as HomeworkRow[]).map(homeworkFromRow)
@@ -405,10 +409,12 @@ export class SupabaseStore implements DataStore {
     const { error } = await this.client.from('homework').upsert({
       id: homework.id,
       subject_id: homework.subjectId,
+      chapter_id: homework.chapterId,
       title: homework.title,
       due_date: homework.dueDate,
       estimated_minutes: homework.estimatedMinutes,
       done: homework.done,
+      done_at: homework.doneAt,
       notes: homework.notes,
       user_id: this.userId,
     })

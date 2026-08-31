@@ -229,6 +229,24 @@ function generateMemorisationTasks(
   return out
 }
 
+/** Minutes déjà "couvertes" par chapitre par des devoirs faits récemment et
+ * liés à ce chapitre — vient réduire (jamais s'additionner à) les séances
+ * d'exercices que l'algo proposerait sinon pour ce chapitre. Appliqué plus
+ * tard, jour par jour dans l'ordre calendaire, sur les tâches déjà
+ * dédupliquées (celles réellement affichées) — pas sur la liste brute de
+ * candidats, pour que ce soit prévisible : ça mange d'abord la séance la
+ * plus proche que tu vois vraiment dans ta semaine. */
+function homeworkCreditByChapter(homework: Homework[], settings: AlgoSettings, todayIso: string): Map<string, number> {
+  const credit = new Map<string, number>()
+  for (const hw of homework) {
+    if (!hw.chapterId || !hw.done || !hw.doneAt) continue
+    const age = daysBetween(hw.doneAt, todayIso)
+    if (age < 0 || age > settings.homeworkCreditWindowDays) continue
+    credit.set(hw.chapterId, (credit.get(hw.chapterId) ?? 0) + hw.estimatedMinutes)
+  }
+  return credit
+}
+
 function generateExerciseTasks(
   chapters: Chapter[],
   deadlines: Deadline[],
@@ -414,7 +432,10 @@ function generateHomeworkTasks(homework: Homework[], windowDates: string[], toda
       if (date > due) continue
       const daysUntilDue = Math.max(0, daysBetween(date, due))
       const urgency = 1 / (daysUntilDue + 1)
-      const tier = 60 + urgency * 35 // 60 (loin) .. 95 (le jour même)
+      // Un devoir a une échéance dure (contrairement à une révision, souple) :
+      // il passe généralement devant le reste, jusqu'à dépasser même le
+      // rattrapage mémorisation en retard (tier 100) quand il est très proche.
+      const tier = 65 + urgency * 45 // 65 (loin) .. 110 (le jour même)
       out.push({
         chapterId: null,
         homeworkId: hw.id,
@@ -572,9 +593,23 @@ export function computeWeekPlan(params: ComputeWeekPlanParams): Record<string, P
     byDate.set(c.date, list)
   }
 
+  // Le crédit devoir-fait est consommé jour par jour dans l'ordre calendaire,
+  // sur les tâches déjà dédupliquées (celles réellement affichées) — la
+  // séance d'exercice la plus proche que tu vois vraiment est mangée en
+  // premier, jamais une variante interne écartée par la déduplication.
+  const creditByChapter = homeworkCreditByChapter(homework, settings, todayIso)
+
   const plan: Record<string, PlanItem[]> = {}
   for (const date of windowDates) {
-    const candidates = dedupe(byDate.get(date) ?? [])
+    const candidates = dedupe(byDate.get(date) ?? []).flatMap((c) => {
+      if (c.kind !== 'exercice' || !c.chapterId) return [c]
+      const remaining = creditByChapter.get(c.chapterId) ?? 0
+      if (remaining <= 0) return [c]
+      const used = Math.min(remaining, c.minutes)
+      creditByChapter.set(c.chapterId, remaining - used)
+      const minutes = c.minutes - used
+      return minutes > 0 ? [{ ...c, minutes }] : []
+    })
     plan[date] = allocateDay(candidates, availabilityByDate[date] ?? 0)
   }
   return plan
