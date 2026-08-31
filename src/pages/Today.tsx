@@ -1,20 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/AuthProvider'
-import { todayIso } from '../lib/id'
+import { newId, todayIso } from '../lib/id'
 import { addDays, computeWeekPlan, type PlanItem } from '../lib/scheduler'
 import { DEFAULT_SETTINGS } from '../lib/types'
 import type {
   AlgoSettings,
   Chapter,
   Deadline,
+  Homework,
+  PlanKind,
+  PlanOverride,
   StudyLogEntry,
   Subject,
   TimetableSlot,
 } from '../lib/types'
 
-const KIND_LABELS: Record<PlanItem['kind'], string> = {
+const KIND_LABELS: Record<PlanKind, string> = {
   memorisation: 'Mémorisation',
   exercice: 'Exercice',
+  devoir: 'Devoir à faire',
   generic: 'Révision',
 }
 
@@ -36,32 +40,41 @@ export default function Today() {
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [deadlines, setDeadlines] = useState<Deadline[]>([])
+  const [homework, setHomework] = useState<Homework[]>([])
   const [timetable, setTimetable] = useState<TimetableSlot[]>([])
   const [settings, setSettings] = useState<AlgoSettings>(DEFAULT_SETTINGS)
   const [availability, setAvailabilityState] = useState<Record<string, number>>({})
   const [log, setLog] = useState<StudyLogEntry[]>([])
+  const [overrides, setOverrides] = useState<PlanOverride[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([today]))
+  const [addingDate, setAddingDate] = useState<string | null>(null)
+  const [addChapterId, setAddChapterId] = useState('')
+  const [addMinutes, setAddMinutes] = useState(30)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
-      const [s, c, d, t, settingsRes, l, availList] = await Promise.all([
+      const [s, c, d, hw, t, settingsRes, l, ov, availList] = await Promise.all([
         store.listSubjects(),
         store.listChapters(),
         store.listDeadlines(),
+        store.listAllHomework(),
         store.listTimetable(),
         store.getSettings(),
         store.listAllStudyLog(),
+        store.listAllPlanOverrides(),
         Promise.all(windowDates.map((date) => store.getAvailability(date))),
       ])
       if (cancelled) return
       setSubjects(s)
       setChapters(c)
       setDeadlines(d)
+      setHomework(hw)
       setTimetable(t)
       setSettings(settingsRes)
       setLog(l)
+      setOverrides(ov)
       const availMap: Record<string, number> = {}
       windowDates.forEach((date, i) => {
         availMap[date] = availList[i]
@@ -77,19 +90,23 @@ export default function Today() {
 
   const subjectById = useMemo(() => new Map(subjects.map((s) => [s.id, s])), [subjects])
   const chapterById = useMemo(() => new Map(chapters.map((c) => [c.id, c])), [chapters])
+  const homeworkById = useMemo(() => new Map(homework.map((h) => [h.id, h])), [homework])
 
   const plan = useMemo(
     () =>
       computeWeekPlan({
         chapters,
+        subjects,
         deadlines,
+        homework,
         timetable,
         studyLog: log,
+        overrides,
         todayIso: today,
         availabilityByDate: availability,
         settings,
       }),
-    [chapters, deadlines, timetable, log, today, availability, settings],
+    [chapters, subjects, deadlines, homework, timetable, log, overrides, today, availability, settings],
   )
 
   async function handleMinutesChange(date: string, value: number) {
@@ -98,6 +115,7 @@ export default function Today() {
   }
 
   function findLogEntry(item: PlanItem, date: string): StudyLogEntry | undefined {
+    if (!item.chapterId) return undefined
     return log.find(
       (l) =>
         l.chapterId === item.chapterId &&
@@ -107,17 +125,32 @@ export default function Today() {
     )
   }
 
+  function isDone(item: PlanItem, date: string): boolean {
+    if (item.homeworkId) return homeworkById.get(item.homeworkId)?.done ?? false
+    return findLogEntry(item, date)?.done ?? false
+  }
+
   async function toggleDone(item: PlanItem, date: string) {
+    if (item.homeworkId) {
+      const hw = homeworkById.get(item.homeworkId)
+      if (!hw) return
+      const updated: Homework = { ...hw, done: !hw.done }
+      await store.upsertHomework(updated)
+      setHomework((prev) => prev.map((h) => (h.id === updated.id ? updated : h)))
+      return
+    }
     const existing = findLogEntry(item, date)
     const entry: StudyLogEntry = existing
       ? { ...existing, done: !existing.done }
       : {
           id: `${item.chapterId}__${item.kind}__${date}__${item.milestoneIndex ?? 'x'}`,
-          chapterId: item.chapterId,
+          chapterId: item.chapterId as string,
           date,
           minutesSpent: item.minutes,
           done: true,
-          kind: item.kind,
+          // sûr : les items "devoir" (seul kind hors StudyLogKind) sont
+          // traités par la branche homeworkId ci-dessus, jamais ici.
+          kind: item.kind as StudyLogEntry['kind'],
           milestoneIndex: item.milestoneIndex,
         }
     await store.upsertStudyLog(entry)
@@ -130,6 +163,47 @@ export default function Today() {
       }
       return [...prev, entry]
     })
+  }
+
+  async function dismissItem(item: PlanItem, date: string) {
+    if (item.overrideId) {
+      await store.deletePlanOverride(item.overrideId)
+      setOverrides((prev) => prev.filter((o) => o.id !== item.overrideId))
+      return
+    }
+    const override: PlanOverride = {
+      id: newId(),
+      chapterId: item.chapterId,
+      homeworkId: item.homeworkId,
+      date,
+      kind: item.kind,
+      type: 'dismissed',
+      minutes: null,
+    }
+    await store.upsertPlanOverride(override)
+    setOverrides((prev) => [...prev, override])
+  }
+
+  function openAddForm(date: string) {
+    setAddingDate(date)
+    setAddChapterId(chapters[0]?.id ?? '')
+    setAddMinutes(30)
+  }
+
+  async function confirmAdd(date: string) {
+    if (!addChapterId) return
+    const override: PlanOverride = {
+      id: newId(),
+      chapterId: addChapterId,
+      homeworkId: null,
+      date,
+      kind: 'generic',
+      type: 'manual',
+      minutes: addMinutes,
+    }
+    await store.upsertPlanOverride(override)
+    setOverrides((prev) => [...prev, override])
+    setAddingDate(null)
   }
 
   function toggleExpanded(date: string) {
@@ -148,7 +222,7 @@ export default function Today() {
       <h1>Semaine</h1>
       <p className="subtitle">Plan de révision généré pour les 7 prochains jours.</p>
 
-      {chapters.length === 0 && (
+      {chapters.length === 0 && homework.length === 0 && (
         <p className="empty-state">
           Aucun chapitre pour l’instant. Ajoute tes matières et chapitres dans l’onglet « Matières » ou
           importe un fichier dans « Importer ».
@@ -189,14 +263,16 @@ export default function Today() {
                   </p>
                 ) : (
                   items.map((item) => {
-                    const chapter = chapterById.get(item.chapterId)
-                    const subject = chapter ? subjectById.get(chapter.subjectId) : undefined
-                    const done = findLogEntry(item, date)?.done ?? false
-                    if (!chapter) return null
+                    const chapter = item.chapterId ? chapterById.get(item.chapterId) : undefined
+                    const hw = item.homeworkId ? homeworkById.get(item.homeworkId) : undefined
+                    const title = chapter?.title ?? hw?.title
+                    const subject = subjectById.get(item.subjectId)
+                    const done = isDone(item, date)
+                    if (!title) return null
                     return (
                       <div
                         className="plan-item"
-                        key={`${item.chapterId}-${item.kind}`}
+                        key={`${item.chapterId ?? item.homeworkId}-${item.kind}`}
                         style={{ marginBottom: 12 }}
                       >
                         <button
@@ -209,7 +285,7 @@ export default function Today() {
                         <div style={{ flex: 1 }}>
                           <div className="row-between">
                             <span style={{ textDecoration: done ? 'line-through' : 'none' }}>
-                              <strong>{chapter.title}</strong>
+                              <strong>{title}</strong>
                             </span>
                             <span className="badge" style={{ background: subject?.color ?? '#6b7280' }}>
                               {subject?.name ?? '—'}
@@ -219,9 +295,47 @@ export default function Today() {
                             {KIND_LABELS[item.kind]} · {item.minutes} min · {item.reason}
                           </div>
                         </div>
+                        <button
+                          className="ghost"
+                          onClick={() => dismissItem(item, date)}
+                          title={item.overrideId ? 'Retirer cette tâche ajoutée' : 'Écarter pour aujourd’hui'}
+                          style={{ minHeight: 28, padding: '2px 8px', flexShrink: 0 }}
+                        >
+                          ✕
+                        </button>
                       </div>
                     )
                   })
+                )}
+
+                {addingDate === date ? (
+                  <div className="row" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+                    <select value={addChapterId} onChange={(e) => setAddChapterId(e.target.value)} style={{ flex: 1 }}>
+                      {chapters.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {subjectById.get(c.subjectId)?.name ?? '—'} — {c.title}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={5}
+                      step={5}
+                      value={addMinutes}
+                      onChange={(e) => setAddMinutes(Number(e.target.value) || 5)}
+                      style={{ width: 72 }}
+                    />
+                    <button onClick={() => confirmAdd(date)}>Ajouter</button>
+                    <button className="ghost" onClick={() => setAddingDate(null)}>
+                      Annuler
+                    </button>
+                  </div>
+                ) : (
+                  chapters.length > 0 && (
+                    <button className="secondary" style={{ marginTop: 8 }} onClick={() => openAddForm(date)}>
+                      + Ajouter une tâche
+                    </button>
+                  )
                 )}
               </div>
             )}

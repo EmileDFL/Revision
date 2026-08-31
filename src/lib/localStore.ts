@@ -5,6 +5,8 @@ import {
   type DataStore,
   type Deadline,
   type ExportBundle,
+  type Homework,
+  type PlanOverride,
   type StudyLogEntry,
   type Subject,
   type TimetableSlot,
@@ -16,9 +18,11 @@ interface RawData {
   subjects: Subject[]
   chapters: Chapter[]
   deadlines: Deadline[]
+  homework: Homework[]
   timetable: TimetableSlot[]
   availability: Record<string, number>
   studyLog: StudyLogEntry[]
+  overrides: PlanOverride[]
   settings: AlgoSettings
 }
 
@@ -27,10 +31,19 @@ function emptyData(): RawData {
     subjects: [],
     chapters: [],
     deadlines: [],
+    homework: [],
     timetable: [],
     availability: {},
     studyLog: [],
+    overrides: [],
     settings: DEFAULT_SETTINGS,
+  }
+}
+
+function normalizeSubject(subject: Subject): Subject {
+  return {
+    ...subject,
+    coefficient: subject.coefficient ?? 1,
   }
 }
 
@@ -57,6 +70,7 @@ function load(): RawData {
   try {
     const parsed = JSON.parse(raw) as Partial<RawData>
     const data = { ...emptyData(), ...parsed }
+    data.subjects = data.subjects.map(normalizeSubject)
     data.chapters = data.chapters.map(normalizeChapter)
     data.studyLog = data.studyLog.map(normalizeStudyLog)
     data.settings = {
@@ -93,6 +107,7 @@ export class LocalStore implements DataStore {
     const chapterIds = new Set(data.chapters.filter((c) => c.subjectId === id).map((c) => c.id))
     data.chapters = data.chapters.filter((c) => c.subjectId !== id)
     data.deadlines = data.deadlines.filter((d) => d.subjectId !== id)
+    data.homework = data.homework.filter((h) => h.subjectId !== id)
     data.timetable = data.timetable.filter((t) => t.subjectId !== id)
     data.studyLog = data.studyLog.filter((l) => !chapterIds.has(l.chapterId))
     save(data)
@@ -124,6 +139,7 @@ export class LocalStore implements DataStore {
     const data = load()
     data.chapters = data.chapters.filter((c) => c.id !== id)
     data.studyLog = data.studyLog.filter((l) => l.chapterId !== id)
+    data.overrides = data.overrides.filter((o) => o.chapterId !== id)
     for (const d of data.deadlines) {
       d.chapterIds = d.chapterIds.filter((cid) => cid !== id)
     }
@@ -145,6 +161,25 @@ export class LocalStore implements DataStore {
   async deleteDeadline(id: string): Promise<void> {
     const data = load()
     data.deadlines = data.deadlines.filter((d) => d.id !== id)
+    save(data)
+  }
+
+  async listAllHomework(): Promise<Homework[]> {
+    return load().homework
+  }
+
+  async upsertHomework(homework: Homework): Promise<void> {
+    const data = load()
+    const idx = data.homework.findIndex((h) => h.id === homework.id)
+    if (idx >= 0) data.homework[idx] = homework
+    else data.homework.push(homework)
+    save(data)
+  }
+
+  async deleteHomework(id: string): Promise<void> {
+    const data = load()
+    data.homework = data.homework.filter((h) => h.id !== id)
+    data.overrides = data.overrides.filter((o) => o.homeworkId !== id)
     save(data)
   }
 
@@ -202,6 +237,24 @@ export class LocalStore implements DataStore {
     save(data)
   }
 
+  async listAllPlanOverrides(): Promise<PlanOverride[]> {
+    return load().overrides
+  }
+
+  async upsertPlanOverride(override: PlanOverride): Promise<void> {
+    const data = load()
+    const idx = data.overrides.findIndex((o) => o.id === override.id)
+    if (idx >= 0) data.overrides[idx] = override
+    else data.overrides.push(override)
+    save(data)
+  }
+
+  async deletePlanOverride(id: string): Promise<void> {
+    const data = load()
+    data.overrides = data.overrides.filter((o) => o.id !== id)
+    save(data)
+  }
+
   async getSettings(): Promise<AlgoSettings> {
     return load().settings
   }
@@ -219,9 +272,11 @@ export class LocalStore implements DataStore {
       subjects: data.subjects,
       chapters: data.chapters,
       deadlines: data.deadlines,
+      homework: data.homework,
       timetable: data.timetable,
       availability: data.availability,
       studyLog: data.studyLog,
+      overrides: data.overrides,
       settings: data.settings,
     }
   }

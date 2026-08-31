@@ -9,6 +9,10 @@ import type {
   Deadline,
   DeadlineType,
   ExportBundle,
+  Homework,
+  OverrideType,
+  PlanKind,
+  PlanOverride,
   StudyLogEntry,
   StudyLogKind,
   Subject,
@@ -21,6 +25,7 @@ interface SubjectRow {
   id: string
   name: string
   color: string
+  coefficient: number | null
 }
 
 interface ChapterRow {
@@ -61,8 +66,28 @@ interface TimetableRow {
   week_type: WeekType
 }
 
+interface PlanOverrideRow {
+  id: string
+  chapter_id: string | null
+  homework_id: string | null
+  date: string
+  kind: PlanKind
+  type: OverrideType
+  minutes: number | null
+}
+
+interface HomeworkRow {
+  id: string
+  subject_id: string
+  title: string
+  due_date: string
+  estimated_minutes: number
+  done: boolean
+  notes: string | null
+}
+
 function subjectFromRow(row: SubjectRow): Subject {
-  return { id: row.id, name: row.name, color: row.color }
+  return { id: row.id, name: row.name, color: row.color, coefficient: row.coefficient ?? 1 }
 }
 
 function chapterFromRow(row: ChapterRow): Chapter {
@@ -111,6 +136,30 @@ function timetableFromRow(row: TimetableRow): TimetableSlot {
   }
 }
 
+function overrideFromRow(row: PlanOverrideRow): PlanOverride {
+  return {
+    id: row.id,
+    chapterId: row.chapter_id,
+    homeworkId: row.homework_id,
+    date: row.date,
+    kind: row.kind,
+    type: row.type,
+    minutes: row.minutes,
+  }
+}
+
+function homeworkFromRow(row: HomeworkRow): Homework {
+  return {
+    id: row.id,
+    subjectId: row.subject_id,
+    title: row.title,
+    dueDate: row.due_date,
+    estimatedMinutes: row.estimated_minutes,
+    done: row.done,
+    notes: row.notes ?? '',
+  }
+}
+
 export class SupabaseStore implements DataStore {
   private client: SupabaseClient
   private userId: string
@@ -121,15 +170,19 @@ export class SupabaseStore implements DataStore {
   }
 
   async listSubjects(): Promise<Subject[]> {
-    const { data, error } = await this.client.from('subjects').select('id,name,color').order('name')
+    const { data, error } = await this.client.from('subjects').select('id,name,color,coefficient').order('name')
     if (error) throw error
     return (data as SubjectRow[]).map(subjectFromRow)
   }
 
   async upsertSubject(subject: Subject): Promise<void> {
-    const { error } = await this.client
-      .from('subjects')
-      .upsert({ id: subject.id, name: subject.name, color: subject.color, user_id: this.userId })
+    const { error } = await this.client.from('subjects').upsert({
+      id: subject.id,
+      name: subject.name,
+      color: subject.color,
+      coefficient: subject.coefficient,
+      user_id: this.userId,
+    })
     if (error) throw error
   }
 
@@ -312,6 +365,61 @@ export class SupabaseStore implements DataStore {
     if (error) throw error
   }
 
+  async listAllPlanOverrides(): Promise<PlanOverride[]> {
+    const { data, error } = await this.client
+      .from('plan_overrides')
+      .select('id,chapter_id,homework_id,date,kind,type,minutes')
+    if (error) throw error
+    return (data as PlanOverrideRow[]).map(overrideFromRow)
+  }
+
+  async upsertPlanOverride(override: PlanOverride): Promise<void> {
+    const { error } = await this.client.from('plan_overrides').upsert({
+      id: override.id,
+      chapter_id: override.chapterId,
+      homework_id: override.homeworkId,
+      date: override.date,
+      kind: override.kind,
+      type: override.type,
+      minutes: override.minutes,
+      user_id: this.userId,
+    })
+    if (error) throw error
+  }
+
+  async deletePlanOverride(id: string): Promise<void> {
+    const { error } = await this.client.from('plan_overrides').delete().eq('id', id)
+    if (error) throw error
+  }
+
+  async listAllHomework(): Promise<Homework[]> {
+    const { data, error } = await this.client
+      .from('homework')
+      .select('id,subject_id,title,due_date,estimated_minutes,done,notes')
+      .order('due_date')
+    if (error) throw error
+    return (data as HomeworkRow[]).map(homeworkFromRow)
+  }
+
+  async upsertHomework(homework: Homework): Promise<void> {
+    const { error } = await this.client.from('homework').upsert({
+      id: homework.id,
+      subject_id: homework.subjectId,
+      title: homework.title,
+      due_date: homework.dueDate,
+      estimated_minutes: homework.estimatedMinutes,
+      done: homework.done,
+      notes: homework.notes,
+      user_id: this.userId,
+    })
+    if (error) throw error
+  }
+
+  async deleteHomework(id: string): Promise<void> {
+    const { error } = await this.client.from('homework').delete().eq('id', id)
+    if (error) throw error
+  }
+
   async getSettings(): Promise<AlgoSettings> {
     const { data, error } = await this.client
       .from('user_settings')
@@ -332,10 +440,11 @@ export class SupabaseStore implements DataStore {
   }
 
   async exportAll(): Promise<ExportBundle> {
-    const [subjects, chapters, deadlines, timetable, settings] = await Promise.all([
+    const [subjects, chapters, deadlines, homework, timetable, settings] = await Promise.all([
       this.listSubjects(),
       this.listChapters(),
       this.listDeadlines(),
+      this.listAllHomework(),
       this.listTimetable(),
       this.getSettings(),
     ])
@@ -348,15 +457,18 @@ export class SupabaseStore implements DataStore {
       availability[row.date] = row.minutes
     }
     const studyLog = await this.listAllStudyLog()
+    const overrides = await this.listAllPlanOverrides()
 
     return {
       exportedAt: new Date().toISOString(),
       subjects,
       chapters,
       deadlines,
+      homework,
       timetable,
       availability,
       studyLog,
+      overrides,
       settings,
     }
   }

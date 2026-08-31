@@ -2,17 +2,27 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/AuthProvider'
 import { newId, todayIso } from '../lib/id'
 import { DEADLINE_TYPE_LABELS } from '../lib/types'
-import type { Chapter, Deadline, DeadlineType, Subject } from '../lib/types'
+import type { Chapter, Deadline, DeadlineType, Homework, Subject } from '../lib/types'
 
 const TYPE_ORDER: DeadlineType[] = ['devoir', 'controle', 'bac_blanc', 'oral', 'autre']
+
+function daysUntil(dateIso: string): number {
+  return Math.round((new Date(`${dateIso}T00:00:00`).getTime() - new Date(`${todayIso()}T00:00:00`).getTime()) / 86_400_000)
+}
+
+function daysUntilLabel(days: number): string {
+  return days < 0 ? 'passé' : days === 0 ? "aujourd'hui" : `dans ${days} j`
+}
 
 export default function Deadlines() {
   const { store } = useAuth()
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [deadlines, setDeadlines] = useState<Deadline[]>([])
+  const [homework, setHomework] = useState<Homework[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [showHomeworkForm, setShowHomeworkForm] = useState(false)
 
   const [title, setTitle] = useState('')
   const [subjectId, setSubjectId] = useState('')
@@ -20,13 +30,25 @@ export default function Deadlines() {
   const [type, setType] = useState<DeadlineType>('devoir')
   const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set())
 
+  const [hwTitle, setHwTitle] = useState('')
+  const [hwSubjectId, setHwSubjectId] = useState('')
+  const [hwDueDate, setHwDueDate] = useState(todayIso())
+  const [hwMinutes, setHwMinutes] = useState(30)
+
   async function refresh() {
-    const [s, c, d] = await Promise.all([store.listSubjects(), store.listChapters(), store.listDeadlines()])
+    const [s, c, d, hw] = await Promise.all([
+      store.listSubjects(),
+      store.listChapters(),
+      store.listDeadlines(),
+      store.listAllHomework(),
+    ])
     setSubjects(s)
     setChapters(c)
     setDeadlines(d.slice().sort((a, b) => a.date.localeCompare(b.date)))
+    setHomework(hw.slice().sort((a, b) => a.dueDate.localeCompare(b.dueDate)))
     setLoading(false)
     if (!subjectId && s.length > 0) setSubjectId(s[0].id)
+    if (!hwSubjectId && s.length > 0) setHwSubjectId(s[0].id)
   }
 
   useEffect(() => {
@@ -70,8 +92,31 @@ export default function Deadlines() {
     await refresh()
   }
 
-  function daysUntil(dateIso: string): number {
-    return Math.round((new Date(`${dateIso}T00:00:00`).getTime() - new Date(`${todayIso()}T00:00:00`).getTime()) / 86_400_000)
+  async function addHomework() {
+    if (!hwTitle.trim() || !hwSubjectId || !hwDueDate) return
+    const hw: Homework = {
+      id: newId(),
+      subjectId: hwSubjectId,
+      title: hwTitle.trim(),
+      dueDate: hwDueDate,
+      estimatedMinutes: hwMinutes,
+      done: false,
+      notes: '',
+    }
+    await store.upsertHomework(hw)
+    setHwTitle('')
+    setShowHomeworkForm(false)
+    await refresh()
+  }
+
+  async function toggleHomeworkDone(hw: Homework) {
+    await store.upsertHomework({ ...hw, done: !hw.done })
+    await refresh()
+  }
+
+  async function deleteHomework(id: string) {
+    await store.deleteHomework(id)
+    await refresh()
   }
 
   if (loading) return <div className="empty-state">Chargement…</div>
@@ -79,7 +124,7 @@ export default function Deadlines() {
   return (
     <div>
       <h1>Échéances</h1>
-      <p className="subtitle">Devoirs, contrôles, bac blanc, oraux…</p>
+      <p className="subtitle">Devoirs sur table, contrôles, bac blanc, oraux…</p>
 
       {!showForm && (
         <button onClick={() => setShowForm(true)} disabled={subjects.length === 0}>
@@ -161,10 +206,102 @@ export default function Deadlines() {
               </div>
               <div className="plan-item__meta">
                 {DEADLINE_TYPE_LABELS[d.type]} · {new Date(`${d.date}T00:00:00`).toLocaleDateString('fr-FR')} ·{' '}
-                {days < 0 ? 'passé' : days === 0 ? "aujourd'hui" : `dans ${days} j`}
+                {daysUntilLabel(days)}
               </div>
             </div>
             <button className="ghost" onClick={() => deleteDeadline(d.id)} style={{ minHeight: 32, padding: '4px 10px' }}>
+              Suppr.
+            </button>
+          </div>
+        )
+      })}
+
+      <h2 style={{ marginTop: 28 }}>Devoirs à faire</h2>
+      <p className="subtitle">Exercices, DM, exposés — tout ce qu’il faut faire (pas apprendre) avant une date.</p>
+
+      {!showHomeworkForm && (
+        <button onClick={() => setShowHomeworkForm(true)} disabled={subjects.length === 0}>
+          + Ajouter un devoir
+        </button>
+      )}
+
+      {showHomeworkForm && (
+        <div className="card">
+          <div className="field">
+            <label>Titre</label>
+            <input
+              type="text"
+              value={hwTitle}
+              onChange={(e) => setHwTitle(e.target.value)}
+              placeholder="Ex : Exercices p.45 n°3-8"
+            />
+          </div>
+          <div className="field">
+            <label>Matière</label>
+            <select value={hwSubjectId} onChange={(e) => setHwSubjectId(e.target.value)}>
+              {subjects.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>À rendre / à faire pour le</label>
+            <input type="date" value={hwDueDate} onChange={(e) => setHwDueDate(e.target.value)} />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>Temps estimé (minutes)</label>
+            <input
+              type="number"
+              min={5}
+              step={5}
+              value={hwMinutes}
+              onChange={(e) => setHwMinutes(Number(e.target.value) || 5)}
+            />
+          </div>
+          <div className="row" style={{ marginTop: 14 }}>
+            <button onClick={addHomework}>Enregistrer</button>
+            <button className="ghost" onClick={() => setShowHomeworkForm(false)}>
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
+      {homework.length === 0 && !showHomeworkForm && <p className="empty-state">Aucun devoir pour l’instant.</p>}
+
+      {homework.map((hw) => {
+        const subject = subjectById.get(hw.subjectId)
+        const days = daysUntil(hw.dueDate)
+        return (
+          <div className="card plan-item" key={hw.id}>
+            <button
+              className={'plan-item__check' + (hw.done ? ' plan-item__check--done' : '')}
+              onClick={() => toggleHomeworkDone(hw)}
+              aria-label={hw.done ? 'Marquer comme non fait' : 'Marquer comme fait'}
+            >
+              {hw.done ? '✓' : ''}
+            </button>
+            <div style={{ flex: 1 }}>
+              <div className="row-between">
+                <span style={{ textDecoration: hw.done ? 'line-through' : 'none' }}>
+                  <strong>{hw.title}</strong>
+                </span>
+                <span className="badge" style={{ background: subject?.color ?? '#6b7280' }}>
+                  {subject?.name ?? '—'}
+                </span>
+              </div>
+              <div className="plan-item__meta">
+                {hw.estimatedMinutes} min · à faire pour le {new Date(`${hw.dueDate}T00:00:00`).toLocaleDateString('fr-FR')} ·{' '}
+                {daysUntilLabel(days)}
+              </div>
+            </div>
+            <button
+              className="ghost"
+              onClick={() => deleteHomework(hw.id)}
+              style={{ minHeight: 32, padding: '4px 10px', flexShrink: 0 }}
+            >
               Suppr.
             </button>
           </div>

@@ -13,10 +13,19 @@ export type WeekType = 'A' | 'B' | 'toutes'
 
 export type StudyLogKind = 'memorisation' | 'exercice' | 'generic'
 
+/** Tous les types de tâches que le plan peut proposer — surperset de
+ * StudyLogKind (study_log n'enregistre jamais "devoir", son avancement vit
+ * directement sur `Homework.done`). */
+export type PlanKind = StudyLogKind | 'devoir'
+
 export interface Subject {
   id: string
   name: string
   color: string
+  /** Coefficient au bac (spécialité ~16, philo 8, grand oral 10, etc.).
+   * 1 = neutre. Sert de départage fin dans l'algo, jamais à outrepasser
+   * l'ordre de priorité (en retard > avant éval > etc.). */
+  coefficient: number
 }
 
 export interface Chapter {
@@ -42,6 +51,19 @@ export interface Deadline {
   chapterIds: string[]
 }
 
+/** Travail à faire à la maison — exercices, DM, exposé... tout ce qu'un
+ * prof demande de faire (pas d'apprendre) avant une date. Contrairement à
+ * un chapitre, ça ne se révise pas en cycles : une fois fait, c'est fait. */
+export interface Homework {
+  id: string
+  subjectId: string
+  title: string
+  dueDate: string // ISO yyyy-mm-dd
+  estimatedMinutes: number
+  done: boolean
+  notes: string
+}
+
 export interface StudyLogEntry {
   id: string
   chapterId: string
@@ -50,6 +72,22 @@ export interface StudyLogEntry {
   done: boolean
   kind: StudyLogKind
   milestoneIndex: number | null // for kind='memorisation': index into memoIntervalsDays
+}
+
+export type OverrideType = 'manual' | 'dismissed'
+
+/** Reprise de contrôle manuelle sur le plan d'un jour précis :
+ * "manual" ajoute une tâche que l'algo n'aurait pas proposée (ou remplace
+ * la proposition automatique du jour pour ce chapitre) ; "dismissed"
+ * retire une tâche proposée ce jour-là sans rien y substituer. */
+export interface PlanOverride {
+  id: string
+  chapterId: string | null
+  homeworkId: string | null // l'un des deux (chapterId/homeworkId) est défini
+  date: string // ISO yyyy-mm-dd
+  kind: PlanKind
+  type: OverrideType
+  minutes: number | null // utilisé seulement pour "manual"
 }
 
 export interface TimetableSlot {
@@ -118,7 +156,7 @@ export const STATUS_LABELS: Record<ChapterStatus, string> = {
 }
 
 export const DEADLINE_TYPE_LABELS: Record<DeadlineType, string> = {
-  devoir: 'Devoir',
+  devoir: 'Devoir sur table',
   controle: 'Contrôle',
   bac_blanc: 'Bac blanc',
   oral: 'Oral',
@@ -158,9 +196,11 @@ export interface ExportBundle {
   subjects: Subject[]
   chapters: Chapter[]
   deadlines: Deadline[]
+  homework: Homework[]
   timetable: TimetableSlot[]
   availability: Record<string, number>
   studyLog: StudyLogEntry[]
+  overrides: PlanOverride[]
   settings: AlgoSettings
 }
 
@@ -178,6 +218,10 @@ export interface DataStore {
   upsertDeadline(deadline: Deadline): Promise<void>
   deleteDeadline(id: string): Promise<void>
 
+  listAllHomework(): Promise<Homework[]>
+  upsertHomework(homework: Homework): Promise<void>
+  deleteHomework(id: string): Promise<void>
+
   listTimetable(): Promise<TimetableSlot[]>
   upsertTimetableSlot(slot: TimetableSlot): Promise<void>
   upsertTimetableSlotsBulk(slots: TimetableSlot[]): Promise<void>
@@ -189,6 +233,10 @@ export interface DataStore {
   listStudyLog(date: string): Promise<StudyLogEntry[]>
   listAllStudyLog(): Promise<StudyLogEntry[]>
   upsertStudyLog(entry: StudyLogEntry): Promise<void>
+
+  listAllPlanOverrides(): Promise<PlanOverride[]>
+  upsertPlanOverride(override: PlanOverride): Promise<void>
+  deletePlanOverride(id: string): Promise<void>
 
   getSettings(): Promise<AlgoSettings>
   setSettings(settings: AlgoSettings): Promise<void>

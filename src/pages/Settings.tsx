@@ -143,9 +143,15 @@ export default function Settings() {
               Mode local : Supabase n’est pas encore configuré, les données sont stockées uniquement sur cet
               appareil.
             </p>
-            <button className="secondary" onClick={loadDemoData} style={{ marginTop: 8 }}>
-              Charger des données de démo
-            </button>
+            {subjects.length === 0 ? (
+              <button className="secondary" onClick={loadDemoData} style={{ marginTop: 8 }}>
+                Charger des données de démo
+              </button>
+            ) : (
+              <p className="plan-item__meta" style={{ marginTop: 8 }}>
+                Des matières existent déjà — le bouton de démo est masqué pour éviter les doublons.
+              </p>
+            )}
             {demoLoaded && (
               <p className="plan-item__meta" style={{ marginTop: 8 }}>
                 ✓ Données de démo chargées. Va dans « Semaine » pour voir le plan généré.

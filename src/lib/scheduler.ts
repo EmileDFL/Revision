@@ -2,32 +2,50 @@ import type {
   AlgoSettings,
   Chapter,
   Deadline,
+  Homework,
+  PlanKind,
+  PlanOverride,
   StudyLogEntry,
+  Subject,
   TimetableSlot,
   WeekAnchor,
 } from './types'
 
-export type TaskKind = 'memorisation' | 'exercice' | 'generic'
+/** Points de priorité ajoutés par point de coefficient — assez petit pour
+ * ne jamais faire sauter un chapitre d'un palier de priorité à l'autre
+ * (le plus petit écart entre paliers est 5000), juste pour départager
+ * finement entre matières à enjeu différent. */
+const COEFFICIENT_BONUS_PER_POINT = 20
 
 export interface PlanItem {
-  chapterId: string
+  chapterId: string | null
+  homeworkId: string | null
   subjectId: string
   minutes: number
   score: number
   reason: string
-  kind: TaskKind
+  kind: PlanKind
   milestoneIndex: number | null
+  /** Present only for a manually-added task — lets the UI remove it
+   * directly instead of dismissing an auto-generated suggestion. */
+  overrideId: string | null
 }
 
 interface Candidate {
-  chapterId: string
+  chapterId: string | null
+  homeworkId: string | null
   subjectId: string
   date: string
-  kind: TaskKind
+  kind: PlanKind
   minutes: number
   priority: number
   reason: string
   milestoneIndex: number | null
+  overrideId: string | null
+}
+
+function refKey(c: { chapterId: string | null; homeworkId: string | null }): string {
+  return c.chapterId ?? c.homeworkId ?? ''
 }
 
 export function addDays(iso: string, n: number): string {
@@ -196,6 +214,7 @@ function generateMemorisationTasks(
     const tier = progress.overdue ? 100 : progress.cappedByEvalTitle ? 90 : 70
     out.push({
       chapterId: chapter.id,
+      homeworkId: null,
       subjectId: chapter.subjectId,
       date: progress.dueDate,
       kind: 'memorisation',
@@ -203,6 +222,7 @@ function generateMemorisationTasks(
       priority: tier * 1000,
       reason: progress.overdue ? `En retard — ${reason}` : reason,
       milestoneIndex: progress.nextMilestoneIndex,
+      overrideId: null,
     })
   }
 
@@ -230,6 +250,7 @@ function generateExerciseTasks(
       if (firstClass) {
         out.push({
           chapterId: chapter.id,
+          homeworkId: null,
           subjectId: chapter.subjectId,
           date: firstClass,
           kind: 'exercice',
@@ -237,6 +258,7 @@ function generateExerciseTasks(
           priority: 50 * 1000,
           reason: 'petite séance de préparation avant le début du cours',
           milestoneIndex: null,
+          overrideId: null,
         })
       }
     }
@@ -250,6 +272,7 @@ function generateExerciseTasks(
         if (isClassDay(chapter.subjectId, date, timetable, settings.weekAnchor)) {
           out.push({
             chapterId: chapter.id,
+            homeworkId: null,
             subjectId: chapter.subjectId,
             date,
             kind: 'exercice',
@@ -257,12 +280,14 @@ function generateExerciseTasks(
             priority: 60 * 1000,
             reason: 'exercices après le cours',
             milestoneIndex: null,
+            overrideId: null,
           })
         }
         const tomorrow = addDays(date, 1)
         if (isClassDay(chapter.subjectId, tomorrow, timetable, settings.weekAnchor)) {
           out.push({
             chapterId: chapter.id,
+            homeworkId: null,
             subjectId: chapter.subjectId,
             date,
             kind: 'exercice',
@@ -270,6 +295,7 @@ function generateExerciseTasks(
             priority: 55 * 1000,
             reason: 'exercices avant le prochain cours',
             milestoneIndex: null,
+            overrideId: null,
           })
         }
       }
@@ -280,6 +306,7 @@ function generateExerciseTasks(
       if (chapter.status !== 'maitrise' && (weekday === 6 || weekday === 7)) {
         out.push({
           chapterId: chapter.id,
+          homeworkId: null,
           subjectId: chapter.subjectId,
           date,
           kind: 'exercice',
@@ -287,6 +314,7 @@ function generateExerciseTasks(
           priority: 40 * 1000,
           reason: 'exercices du week-end',
           milestoneIndex: null,
+          overrideId: null,
         })
       }
     }
@@ -314,6 +342,7 @@ function generateExerciseTasks(
         const daysBefore = daysBetween(d, nearest.date)
         out.push({
           chapterId: chapter.id,
+          homeworkId: null,
           subjectId: chapter.subjectId,
           date: d,
           kind: 'exercice',
@@ -323,6 +352,7 @@ function generateExerciseTasks(
             ? `révision légère avant éval : ${nearest.title}`
             : `exercices avant éval (J-${daysBefore}) : ${nearest.title}`,
           milestoneIndex: null,
+          overrideId: null,
         })
       })
     }
@@ -357,6 +387,7 @@ function generateFallbackTasks(
     }
     out.push({
       chapterId: chapter.id,
+      homeworkId: null,
       subjectId: chapter.subjectId,
       date: todayIso,
       kind: 'generic',
@@ -364,15 +395,89 @@ function generateFallbackTasks(
       priority: 10 * 1000 + urgency * 100,
       reason,
       milestoneIndex: null,
+      overrideId: null,
     })
   }
   return out
 }
 
+/** Devoir maison / exercices / exposé : contrairement à un chapitre, ça ne
+ * se répète pas — dès que c'est fait (Homework.done), ça disparaît partout.
+ * Proposé chaque jour restant jusqu'à la date limite (comprise), pour
+ * pouvoir s'y mettre en plusieurs fois plutôt qu'à la dernière minute. */
+function generateHomeworkTasks(homework: Homework[], windowDates: string[], todayIso: string): Candidate[] {
+  const out: Candidate[] = []
+  for (const hw of homework) {
+    if (hw.done) continue
+    const due = hw.dueDate < todayIso ? todayIso : hw.dueDate
+    for (const date of windowDates) {
+      if (date > due) continue
+      const daysUntilDue = Math.max(0, daysBetween(date, due))
+      const urgency = 1 / (daysUntilDue + 1)
+      const tier = 60 + urgency * 35 // 60 (loin) .. 95 (le jour même)
+      out.push({
+        chapterId: null,
+        homeworkId: hw.id,
+        subjectId: hw.subjectId,
+        date,
+        kind: 'devoir',
+        minutes: homeworkBlockMinutes(hw),
+        priority: Math.round(tier * 1000),
+        reason: daysUntilDue === 0 ? `à rendre aujourd'hui : ${hw.title}` : `à faire avant le ${frDate(due)} : ${hw.title}`,
+        milestoneIndex: null,
+        overrideId: null,
+      })
+    }
+  }
+  return out
+}
+
+function homeworkBlockMinutes(hw: Homework): number {
+  return Math.max(10, Math.min(hw.estimatedMinutes, 45))
+}
+
+function frDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
+}
+
+function generateManualCandidates(chapters: Chapter[], overrides: PlanOverride[]): Candidate[] {
+  const chapterById = new Map(chapters.map((c) => [c.id, c]))
+  const out: Candidate[] = []
+  for (const o of overrides) {
+    if (o.type !== 'manual' || !o.chapterId) continue
+    const chapter = chapterById.get(o.chapterId)
+    if (!chapter) continue
+    out.push({
+      chapterId: o.chapterId,
+      homeworkId: null,
+      subjectId: chapter.subjectId,
+      date: o.date,
+      kind: o.kind,
+      minutes: o.minutes ?? 30,
+      priority: 110 * 1000,
+      reason: 'ajouté manuellement',
+      milestoneIndex: null,
+      overrideId: o.id,
+    })
+  }
+  return out
+}
+
+/** Ajoute un petit bonus de priorité selon le coefficient au bac de la
+ * matière de la tâche — un départage fin, jamais assez fort pour renverser
+ * l'ordre des paliers (en retard > avant éval > etc.). */
+function applyCoefficientBonus(candidates: Candidate[], subjects: Subject[]): Candidate[] {
+  const coefficientBySubject = new Map(subjects.map((s) => [s.id, s.coefficient]))
+  return candidates.map((c) => {
+    const coefficient = coefficientBySubject.get(c.subjectId) ?? 1
+    return { ...c, priority: c.priority + coefficient * COEFFICIENT_BONUS_PER_POINT }
+  })
+}
+
 function dedupe(candidates: Candidate[]): Candidate[] {
   const best = new Map<string, Candidate>()
   for (const c of candidates) {
-    const key = `${c.chapterId}|${c.kind}`
+    const key = `${refKey(c)}|${c.kind}`
     const existing = best.get(key)
     if (!existing || c.priority > existing.priority) best.set(key, c)
   }
@@ -388,12 +493,14 @@ function allocateDay(candidates: Candidate[], minutesAvailable: number): PlanIte
     const minutes = Math.min(c.minutes, remaining)
     result.push({
       chapterId: c.chapterId,
+      homeworkId: c.homeworkId,
       subjectId: c.subjectId,
       minutes,
       score: c.priority,
       reason: c.reason,
       kind: c.kind,
       milestoneIndex: c.milestoneIndex,
+      overrideId: c.overrideId,
     })
     remaining -= minutes
   }
@@ -402,9 +509,12 @@ function allocateDay(candidates: Candidate[], minutesAvailable: number): PlanIte
 
 export interface ComputeWeekPlanParams {
   chapters: Chapter[]
+  subjects: Subject[]
   deadlines: Deadline[]
+  homework: Homework[]
   timetable: TimetableSlot[]
   studyLog: StudyLogEntry[]
+  overrides: PlanOverride[]
   todayIso: string
   availabilityByDate: Record<string, number>
   settings: AlgoSettings
@@ -412,21 +522,51 @@ export interface ComputeWeekPlanParams {
 
 /**
  * Deterministic, local algorithm — no AI involved. Produces a 7-day plan
- * (today included) from three task generators (mémorisation, exercice,
- * filet de sécurité générique) merged by a single day-by-day allocator.
+ * (today included) from four task generators (mémorisation, exercice,
+ * devoirs, filet de sécurité générique) merged by a single day-by-day
+ * allocator, then adjusted by the user's manual overrides (tâches ajoutées
+ * ou écartées) and un léger départage par coefficient de matière.
  */
 export function computeWeekPlan(params: ComputeWeekPlanParams): Record<string, PlanItem[]> {
-  const { chapters, deadlines, timetable, studyLog, todayIso, availabilityByDate, settings } = params
+  const {
+    chapters,
+    subjects,
+    deadlines,
+    homework,
+    timetable,
+    studyLog,
+    overrides,
+    todayIso,
+    availabilityByDate,
+    settings,
+  } = params
   const windowDates = Array.from({ length: 7 }, (_, i) => addDays(todayIso, i))
 
   const memoCandidates = generateMemorisationTasks(chapters, deadlines, studyLog, settings, windowDates, todayIso)
   const exerciseCandidates = generateExerciseTasks(chapters, deadlines, timetable, settings, windowDates, todayIso)
-  const coveredChapterIds = new Set([...memoCandidates, ...exerciseCandidates].map((c) => c.chapterId))
+  const coveredChapterIds = new Set(
+    [...memoCandidates, ...exerciseCandidates].map((c) => c.chapterId).filter((id): id is string => id !== null),
+  )
   const fallbackCandidates = generateFallbackTasks(chapters, deadlines, todayIso, settings, coveredChapterIds)
+  const homeworkCandidates = generateHomeworkTasks(homework, windowDates, todayIso)
+  const manualCandidates = generateManualCandidates(chapters, overrides)
+
+  const dismissedKeys = new Set(
+    overrides.filter((o) => o.type === 'dismissed').map((o) => `${refKey(o)}|${o.kind}|${o.date}`),
+  )
+
+  const allCandidates = applyCoefficientBonus(
+    [...memoCandidates, ...exerciseCandidates, ...fallbackCandidates, ...homeworkCandidates, ...manualCandidates],
+    subjects,
+  )
 
   const byDate = new Map<string, Candidate[]>()
-  for (const c of [...memoCandidates, ...exerciseCandidates, ...fallbackCandidates]) {
+  for (const c of allCandidates) {
     if (!windowDates.includes(c.date)) continue
+    // Une tâche ajoutée manuellement (overrideId défini) n'est jamais
+    // écartée par un "dismissed" — seules les suggestions automatiques le
+    // sont.
+    if (!c.overrideId && dismissedKeys.has(`${refKey(c)}|${c.kind}|${c.date}`)) continue
     const list = byDate.get(c.date) ?? []
     list.push(c)
     byDate.set(c.date, list)

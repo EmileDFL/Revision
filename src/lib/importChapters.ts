@@ -58,6 +58,7 @@ export function rowsToEntities(
         id: newId(),
         name: row.matiere,
         color: SUBJECT_COLORS[(newSubjects.length + existingSubjects.length) % SUBJECT_COLORS.length],
+        coefficient: 1,
       }
       subjectByName.set(key, subject)
       newSubjects.push(subject)

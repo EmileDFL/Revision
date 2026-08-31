@@ -22,6 +22,7 @@ export default function Subjects() {
 
   const [newSubjectName, setNewSubjectName] = useState('')
   const [newSubjectColor, setNewSubjectColor] = useState(NEW_SUBJECT_COLOR)
+  const [newSubjectCoefficient, setNewSubjectCoefficient] = useState(1)
   const [newChapterTitle, setNewChapterTitle] = useState<Record<string, string>>({})
 
   async function refresh() {
@@ -76,10 +77,21 @@ export default function Subjects() {
 
   async function addSubject() {
     if (!newSubjectName.trim()) return
-    const subject: Subject = { id: newId(), name: newSubjectName.trim(), color: newSubjectColor }
+    const subject: Subject = {
+      id: newId(),
+      name: newSubjectName.trim(),
+      color: newSubjectColor,
+      coefficient: newSubjectCoefficient,
+    }
     await store.upsertSubject(subject)
     setNewSubjectName('')
+    setNewSubjectCoefficient(1)
     setOpenSubjectId(subject.id)
+    await refresh()
+  }
+
+  async function setSubjectCoefficient(subject: Subject, coefficient: number) {
+    await store.upsertSubject({ ...subject, coefficient })
     await refresh()
   }
 
@@ -153,8 +165,17 @@ export default function Subjects() {
             value={newSubjectColor}
             onChange={(e) => setNewSubjectColor(e.target.value)}
           />
+          <input
+            type="number"
+            min={1}
+            value={newSubjectCoefficient}
+            onChange={(e) => setNewSubjectCoefficient(Number(e.target.value) || 1)}
+            title="Coefficient au bac"
+            style={{ width: 64 }}
+          />
           <button onClick={addSubject}>Ajouter</button>
         </div>
+        <p className="plan-item__meta">Coefficient au bac (1 par défaut) — sert à départager les priorités.</p>
       </div>
 
       {subjects.length === 0 && <p className="empty-state">Aucune matière pour l’instant.</p>}
@@ -178,6 +199,17 @@ export default function Subjects() {
 
             {isOpen && (
               <div style={{ marginTop: 12 }}>
+                <div className="field">
+                  <label>Coefficient au bac</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={subject.coefficient}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setSubjectCoefficient(subject, Number(e.target.value) || 1)}
+                    style={{ width: 80 }}
+                  />
+                </div>
                 {subjectChapters.map((chapter) => (
                   <div key={chapter.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid var(--color-border)' }}>
                     <div className="row-between">

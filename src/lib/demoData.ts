@@ -19,9 +19,9 @@ export interface DemoBundle {
 export function buildDemoBundle(): DemoBundle {
   const today = todayIso()
 
-  const maths: Subject = { id: newId(), name: 'Mathématiques', color: '#4338ca' }
-  const histoire: Subject = { id: newId(), name: 'Histoire-Géographie', color: '#0891b2' }
-  const anglais: Subject = { id: newId(), name: 'Anglais', color: '#d97706' }
+  const maths: Subject = { id: newId(), name: 'Mathématiques', color: '#4338ca', coefficient: 16 }
+  const histoire: Subject = { id: newId(), name: 'Histoire-Géographie', color: '#0891b2', coefficient: 3 }
+  const anglais: Subject = { id: newId(), name: 'Anglais', color: '#d97706', coefficient: 3 }
   const subjects = [maths, histoire, anglais]
 
   const suites: Chapter = {
