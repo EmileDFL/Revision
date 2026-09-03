@@ -274,9 +274,9 @@ button:disabled {
 }
 
 .plan-item__check {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
   border: 2px solid var(--color-border);
   flex-shrink: 0;
   margin-top: 2px;
@@ -285,6 +285,8 @@ button:disabled {
   justify-content: center;
   cursor: pointer;
   background: var(--color-surface);
+  font-size: 18px;
+  touch-action: manipulation;
 }
 
 .plan-item__check--done {

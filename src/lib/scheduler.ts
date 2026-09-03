@@ -191,6 +191,10 @@ export function computeMemoProgress(
   return { nextMilestoneIndex, totalMilestones: intervals.length, dueDate, overdue, cappedByEvalTitle }
 }
 
+export function memoMilestoneLabel(days: number): string {
+  return days === 0 ? 'le jour même' : `J+${days}`
+}
+
 function generateMemorisationTasks(
   chapters: Chapter[],
   deadlines: Deadline[],
@@ -208,7 +212,7 @@ function generateMemorisationTasks(
     const reason = progress.cappedByEvalTitle
       ? `rappel mémorisation avant éval : ${progress.cappedByEvalTitle}`
       : progress.nextMilestoneIndex !== null
-        ? `rappel mémorisation (J+${settings.memoIntervalsDays[progress.nextMilestoneIndex]})`
+        ? `rappel mémorisation (${memoMilestoneLabel(settings.memoIntervalsDays[progress.nextMilestoneIndex])})`
         : "rappel d'entretien mémorisation"
 
     const tier = progress.overdue ? 100 : progress.cappedByEvalTitle ? 90 : 70

@@ -51,6 +51,7 @@ export default function Today() {
   const [addingDate, setAddingDate] = useState<string | null>(null)
   const [addChapterId, setAddChapterId] = useState('')
   const [addMinutes, setAddMinutes] = useState(30)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -131,58 +132,78 @@ export default function Today() {
   }
 
   async function toggleDone(item: PlanItem, date: string) {
-    if (item.homeworkId) {
-      const hw = homeworkById.get(item.homeworkId)
-      if (!hw) return
-      const done = !hw.done
-      const updated: Homework = { ...hw, done, doneAt: done ? today : null }
-      await store.upsertHomework(updated)
-      setHomework((prev) => prev.map((h) => (h.id === updated.id ? updated : h)))
-      return
-    }
-    const existing = findLogEntry(item, date)
-    const entry: StudyLogEntry = existing
-      ? { ...existing, done: !existing.done }
-      : {
-          id: `${item.chapterId}__${item.kind}__${date}__${item.milestoneIndex ?? 'x'}`,
-          chapterId: item.chapterId as string,
-          date,
-          minutesSpent: item.minutes,
-          done: true,
-          // sûr : les items "devoir" (seul kind hors StudyLogKind) sont
-          // traités par la branche homeworkId ci-dessus, jamais ici.
-          kind: item.kind as StudyLogEntry['kind'],
-          milestoneIndex: item.milestoneIndex,
-        }
-    await store.upsertStudyLog(entry)
-    setLog((prev) => {
-      const idx = prev.findIndex((l) => l.id === entry.id)
-      if (idx >= 0) {
-        const copy = [...prev]
-        copy[idx] = entry
-        return copy
+    try {
+      if (item.homeworkId) {
+        const hw = homeworkById.get(item.homeworkId)
+        if (!hw) return
+        const done = !hw.done
+        const updated: Homework = { ...hw, done, doneAt: done ? today : null }
+        await store.upsertHomework(updated)
+        setHomework((prev) => prev.map((h) => (h.id === updated.id ? updated : h)))
+        return
       }
-      return [...prev, entry]
-    })
+      const existing = findLogEntry(item, date)
+      const entry: StudyLogEntry = existing
+        ? { ...existing, done: !existing.done }
+        : {
+            id: newId(),
+            chapterId: item.chapterId as string,
+            date,
+            minutesSpent: item.minutes,
+            done: true,
+            // sûr : les items "devoir" (seul kind hors StudyLogKind) sont
+            // traités par la branche homeworkId ci-dessus, jamais ici.
+            kind: item.kind as StudyLogEntry['kind'],
+            milestoneIndex: item.milestoneIndex,
+          }
+      await store.upsertStudyLog(entry)
+      setLog((prev) => {
+        const idx = prev.findIndex((l) => l.id === entry.id)
+        if (idx >= 0) {
+          const copy = [...prev]
+          copy[idx] = entry
+          return copy
+        }
+        return [...prev, entry]
+      })
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Impossible d’enregistrer — réessaie.')
+    }
   }
 
   async function dismissItem(item: PlanItem, date: string) {
-    if (item.overrideId) {
-      await store.deletePlanOverride(item.overrideId)
-      setOverrides((prev) => prev.filter((o) => o.id !== item.overrideId))
-      return
+    try {
+      if (item.overrideId) {
+        await store.deletePlanOverride(item.overrideId)
+        setOverrides((prev) => prev.filter((o) => o.id !== item.overrideId))
+        return
+      }
+      const override: PlanOverride = {
+        id: newId(),
+        chapterId: item.chapterId,
+        homeworkId: item.homeworkId,
+        date,
+        kind: item.kind,
+        type: 'dismissed',
+        minutes: null,
+      }
+      await store.upsertPlanOverride(override)
+      setOverrides((prev) => [...prev, override])
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Impossible d’enregistrer — réessaie.')
     }
-    const override: PlanOverride = {
-      id: newId(),
-      chapterId: item.chapterId,
-      homeworkId: item.homeworkId,
-      date,
-      kind: item.kind,
-      type: 'dismissed',
-      minutes: null,
+  }
+
+  async function restoreDismissed(overrideId: string) {
+    try {
+      await store.deletePlanOverride(overrideId)
+      setOverrides((prev) => prev.filter((o) => o.id !== overrideId))
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Impossible d’enregistrer — réessaie.')
     }
-    await store.upsertPlanOverride(override)
-    setOverrides((prev) => [...prev, override])
   }
 
   function openAddForm(date: string) {
@@ -222,6 +243,17 @@ export default function Today() {
     <div>
       <h1>Semaine</h1>
       <p className="subtitle">Plan de révision généré pour les 7 prochains jours.</p>
+
+      {error && (
+        <div className="card" style={{ borderColor: 'var(--color-danger)' }}>
+          <p className="error-text" style={{ margin: 0 }}>
+            {error}
+          </p>
+          <button className="ghost" style={{ marginTop: 8 }} onClick={() => setError(null)}>
+            OK
+          </button>
+        </div>
+      )}
 
       {chapters.length === 0 && homework.length === 0 && (
         <p className="empty-state">
@@ -308,6 +340,37 @@ export default function Today() {
                     )
                   })
                 )}
+
+                {(() => {
+                  const dismissed = overrides.filter((o) => o.type === 'dismissed' && o.date === date)
+                  if (dismissed.length === 0) return null
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <p className="plan-item__meta" style={{ marginBottom: 4 }}>
+                        Écarté(s) ce jour-là :
+                      </p>
+                      {dismissed.map((o) => {
+                        const title = o.chapterId
+                          ? chapterById.get(o.chapterId)?.title
+                          : o.homeworkId
+                            ? homeworkById.get(o.homeworkId)?.title
+                            : undefined
+                        return (
+                          <div className="row-between" key={o.id} style={{ marginTop: 4 }}>
+                            <span className="plan-item__meta">{title ?? '—'}</span>
+                            <button
+                              className="ghost"
+                              onClick={() => restoreDismissed(o.id)}
+                              style={{ minHeight: 28, padding: '2px 8px' }}
+                            >
+                              Remettre
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
 
                 {addingDate === date ? (
                   <div className="row" style={{ flexWrap: 'wrap', marginTop: 8 }}>

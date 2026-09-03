@@ -150,7 +150,7 @@ export const DEFAULT_SETTINGS: AlgoSettings = {
     maitrise: 0.5,
   },
   horizonDays: 7,
-  memoIntervalsDays: [1, 3, 7, 15, 30],
+  memoIntervalsDays: [0, 1, 3, 7, 15, 30],
   exercisePreEvalOffsetsDays: [7, 4, 2, 1],
   memoSpreadDays: 3,
   memoRepeatDays: 30,

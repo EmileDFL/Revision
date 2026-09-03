@@ -55,7 +55,7 @@ export default function Settings() {
     const values = memoIntervalsText
       .split(',')
       .map((v) => Number(v.trim()))
-      .filter((n) => Number.isFinite(n) && n > 0)
+      .filter((n) => Number.isFinite(n) && n >= 0)
       .sort((a, b) => a - b)
     if (values.length === 0) return
     save({ ...settings, memoIntervalsDays: values })

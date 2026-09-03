@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/AuthProvider'
 import { newId, todayIso } from '../lib/id'
-import { computeMemoProgress, daysBetween } from '../lib/scheduler'
+import { computeMemoProgress, daysBetween, memoMilestoneLabel } from '../lib/scheduler'
 import { COURSE_STAGE_LABELS, DEFAULT_SETTINGS, STATUS_LABELS, WORK_MODE_LABELS } from '../lib/types'
 import type { AlgoSettings, Chapter, ChapterStatus, CourseStage, Deadline, StudyLogEntry, Subject, WorkMode } from '../lib/types'
 
@@ -48,7 +48,7 @@ export default function Subjects() {
     if (!progress) return null
     const palier =
       progress.nextMilestoneIndex !== null
-        ? `palier ${progress.nextMilestoneIndex + 1}/${progress.totalMilestones} (J+${settings.memoIntervalsDays[progress.nextMilestoneIndex]})`
+        ? `palier ${progress.nextMilestoneIndex + 1}/${progress.totalMilestones} (${memoMilestoneLabel(settings.memoIntervalsDays[progress.nextMilestoneIndex])})`
         : "phase d'entretien"
     if (progress.overdue) {
       const late = daysBetween(progress.dueDate, today)
